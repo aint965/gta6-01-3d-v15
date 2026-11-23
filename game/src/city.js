@@ -269,11 +269,36 @@ export function buildCity(seed = SEED) {
     return { x: x + (nx / len) * side * (rd.w / 2 - 5), z: z + (nz / len) * side * (rd.w / 2 - 5), angle };
   }
   const roadPool = ROADS.filter((r) => r.kind !== 'diagonal');
+  // Parked cars sit at the curb, clear of the driving lanes: only on roads
+  // wide enough for two lanes plus parking (w >= 28), at w/2 - 2. Parking
+  // on a narrow local road would put the car in the traffic lane (the
+  // traffic lanes run at w/4, and w/2 - 5 overlaps them on w <= 28).
+  const parkPool = ROADS.filter((r) => r.kind !== 'diagonal' && r.w >= 28);
   for (let i = 0; i < 54; i++) {
-    const rd = pick(rng, roadPool);
-    const c = carOnRoad(rd, rng() < 0.5 ? -1 : 1, rng());
-    if (inCanal(c.x, c.z, 6) || inRect(c.x, c.z, PLAZA, 6)) continue;
-    parked.push({ ...c, color: pick(rng, CAR_COLORS), kind: 'parked', taxi: false });
+    let c = null;
+    for (let attempt = 0; attempt < 10 && !c; attempt++) {
+      const rd = pick(rng, parkPool);
+      const t = rng();
+      const px = rd.x1 + (rd.x2 - rd.x1) * t;
+      const pz = rd.z1 + (rd.z2 - rd.z1) * t;
+      const nx = -(rd.z2 - rd.z1);
+      const nz = rd.x2 - rd.x1;
+      const len = Math.hypot(nx, nz) || 1;
+      const side = rng() < 0.5 ? -1 : 1;
+      const cand = {
+        x: px + (nx / len) * side * (rd.w / 2 - 2),
+        z: pz + (nz / len) * side * (rd.w / 2 - 2),
+        angle: Math.atan2(rd.x2 - rd.x1, rd.z2 - rd.z1),
+      };
+      if (inCanal(cand.x, cand.z, 6) || inRect(cand.x, cand.z, PLAZA, 6)) continue;
+      // Keep parked cars apart: two cars on the same curb spot overlap.
+      let ok = true;
+      for (const q of parked) {
+        if (Math.hypot(q.x - cand.x, q.z - cand.z) < 12) { ok = false; break; }
+      }
+      if (ok) c = cand;
+    }
+    if (c) parked.push({ ...c, color: pick(rng, CAR_COLORS), kind: 'parked', taxi: false });
   }
   const driveSpots = [
     { x: 330, z: 60, angle: 0.2 }, { x: 470, z: -70, angle: -0.4 },

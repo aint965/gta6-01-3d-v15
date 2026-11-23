@@ -16,6 +16,8 @@ export function createHud(city) {
   const fpsEl = el('hud-fps');
   const speedEl = el('hud-speed');
   const modeEl = el('hud-mode');
+  const promptEl = el('hud-prompt');
+  const damageEl = el('hud-damage');
   const mini = el('hud-minimap');
   const mctx = mini.getContext('2d');
   const cctx = compassCanvas.getContext('2d');
@@ -111,7 +113,9 @@ export function createHud(city) {
     presetEl.textContent = state.presetLabel;
     fpsEl.textContent = state.fpsText;
     speedEl.textContent = state.speedKmh + ' km/h';
-    modeEl.textContent = state.shotMode ? 'SHOT VIEW' : 'STAGE A · FREE CAMERA';
+    modeEl.textContent = state.modeLabel || (state.shotMode ? 'SHOT VIEW' : 'STAGE A · FREE CAMERA');
+    if (promptEl) promptEl.textContent = state.prompt || '';
+    if (damageEl) damageEl.textContent = state.damage > 0 ? `DAMAGE ${Math.round(state.damage)}%` : '';
     drawCompass(state.yawDeg);
     drawMinimap(state.cameraTarget);
   }

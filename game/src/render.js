@@ -261,6 +261,13 @@ export function buildStaticGeometry(city, presetName) {
   geo.quad([K.x0, 0.02, K.z0], [K.x0, 0.02, K.z1], [K.x1, 0.02, K.z1], [K.x1, 0.02, K.z0], up, hexRgb('#6fae5f'));
 
   // Roads: asphalt, pale sidewalks on the big ones, centre dashes.
+  // NOTE (Stage B): the asphalt used to sit at y=0.03, only 0.03 above the
+  // 10000x10000 grass plane. From the low chase camera the road lost the
+  // depth test to the grass in patches (the grass plane's depth is
+  // interpolated across two huge triangles, which swamps a 0.03 offset at
+  // a grazing angle), so the boulevard read as grass in the drive shots.
+  // Raising the road surfaces to 0.15/0.18 fixes it; the offset is far
+  // too small to see.
   const asphalt = hexRgb('#565a60');
   const sidewalk = hexRgb('#d8cfc0');
   const dash = hexRgb('#e8d27a');
@@ -269,7 +276,7 @@ export function buildStaticGeometry(city, presetName) {
     const len = Math.hypot(dx, dz) || 1;
     const nx = -dz / len, nz = dx / len;
     const hw = r.w / 2;
-    const p = (x, z) => [x, 0.03, z];
+    const p = (x, z) => [x, 0.15, z];
     geo.quad(p(r.x1 + nx * hw, r.z1 + nz * hw), p(r.x2 + nx * hw, r.z2 + nz * hw), p(r.x2 - nx * hw, r.z2 - nz * hw), p(r.x1 - nx * hw, r.z1 - nz * hw), up, asphalt);
     if (r.kind === 'boulevard' || r.kind === 'avenue' || r.kind === 'secondary') {
       const sw = 6;
@@ -289,10 +296,10 @@ export function buildStaticGeometry(city, presetName) {
         const ux = dx / len, uz = dz / len;
         const L = 7, W = 1.2;
         geo.quad(
-          [cx - ux * L + nx * W, 0.05, cz - uz * L + nz * W],
-          [cx + ux * L + nx * W, 0.05, cz + uz * L + nz * W],
-          [cx + ux * L - nx * W, 0.05, cz + uz * L - nz * W],
-          [cx - ux * L - nx * W, 0.05, cz - uz * L - nz * W],
+          [cx - ux * L + nx * W, 0.18, cz - uz * L + nz * W],
+          [cx + ux * L + nx * W, 0.18, cz + uz * L + nz * W],
+          [cx + ux * L - nx * W, 0.18, cz + uz * L - nz * W],
+          [cx - ux * L - nx * W, 0.18, cz - uz * L - nz * W],
           up, dash,
         );
       }
@@ -348,12 +355,13 @@ export function buildStaticGeometry(city, presetName) {
       geo.box(b.x, 0, b.z, b.w * 1.02, 3, b.d * 1.02, b.angle, hexRgb(b.brick));
     }
     windowQuads(geo, b, rnd);
-    // Ground shadow: offset quad, stretched with height.
+    // Ground shadow: offset quad, stretched with height. At y=0.17 so it
+    // sits above the raised road asphalt (0.15) as well as the grass.
     const L = b.h * preset.shadowLen * 0.6;
     const c = Math.cos(b.angle), s = Math.sin(b.angle);
     const hw = b.w / 2 + L * 0.4, hd = b.d / 2;
     const ox = shx * L * 0.5, oz = shz * L * 0.5;
-    const pts = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([x, z]) => [b.x + ox + x * c - z * s, 0.04, b.z + oz + x * s + z * c]);
+    const pts = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([x, z]) => [b.x + ox + x * c - z * s, 0.17, b.z + oz + x * s + z * c]);
     geo.quad(pts[0], pts[3], pts[2], pts[1], up, shadow);
   }
 
@@ -379,7 +387,8 @@ export function buildStaticGeometry(city, presetName) {
   for (const l of city.lamps) {
     geo.box(l.x, 0, l.z, 0.7, l.h, 0.7, 0, poleCol);
     geo.box(l.x, l.h, l.z, 2.2, 1.2, 2.2, 0, headCol, [0.9, 0.72, 0.35]);
-    geo.disc(l.x, 0.04, l.z, 6, poolCol, [0.35, 0.28, 0.12], 12);
+    // Light pool on the pavement, above the raised asphalt (0.15).
+    geo.disc(l.x, 0.17, l.z, 6, poolCol, [0.35, 0.28, 0.12], 12);
   }
 
   // Boats: hull + cabin + mast.
@@ -452,15 +461,45 @@ export function buildSkyGeometry(presetName, atlasRects) {
 }
 
 // --- dynamic geometry: cars + pedestrians (rebuilt on demand) -----------
-export function buildDynamicGeometry(city) {
+// opts (Stage B): drivenCar, headlightsOn, headlightLevel (0..1), mara,
+// prompt {x, z, r, mode}, dust [{x, z, age, life, size}], timeMs,
+// lights [{x, z, ns, ew}] — the lit lamp colour per approach direction.
+export function buildDynamicGeometry(city, opts = {}) {
   const geo = new Geo();
-  const body = (c, w, h, d, color) => {
-    geo.box(c.x, 0, c.z, w, h, d, c.angle, hexRgb(color));
+  // The headlight beam also lights the cars inside it: a car in the beam
+  // gets a warm emissive on its body and cabin, so the headlights
+  // genuinely light the car ahead instead of only painting the road.
+  // (The beam is the same trapezoid as the ground cone: 42 long, half-
+  // width 1.4 at the bumper widening to 5.0, fading with distance.)
+  let beam = null;
+  if (opts.drivenCar && opts.headlightsOn !== false) {
+    const c = opts.drivenCar;
+    beam = {
+      x: c.x, z: c.z,
+      fx: Math.sin(c.angle), fz: Math.cos(c.angle),
+      level: opts.headlightLevel ?? 1,
+    };
+  }
+  const beamEmissive = (x, z) => {
+    if (!beam) return [0, 0, 0];
+    const dx = x - beam.x, dz = z - beam.z;
+    const along = dx * beam.fx + dz * beam.fz;
+    if (along < 4 || along > 46) return [0, 0, 0];
+    const side = Math.abs(dx * beam.fz - dz * beam.fx);
+    const halfW = 1.4 + (5.0 - 1.4) * (along / 42);
+    if (side > halfW + 2.3) return [0, 0, 0]; // + the car's half-width
+    const f = 1 - (along - 4) / 42;
+    const s = beam.level * (0.55 + 0.45 * f);
+    return [0.7 * s, 0.55 * s, 0.32 * s];
+  };
+  const body = (c, w, h, d, color, em) => {
+    geo.box(c.x, 0, c.z, w, h, d, c.angle, hexRgb(color), em);
   };
   const all = [...city.cars.parked, ...city.cars.drivable, ...city.cars.traffic];
   for (const c of all) {
-    body(c, 4.6, 2.2, 9, c.color);
-    geo.box(c.x, 2.2, c.z, 4.0, 1.8, 5.2, c.angle, hexRgb('#1c2733'), [0, 0, 0], 0.25);
+    const em = beamEmissive(c.x, c.z);
+    body(c, 4.6, 2.2, 9, c.color, em);
+    geo.box(c.x, 2.2, c.z, 4.0, 1.8, 5.2, c.angle, hexRgb('#1c2733'), em, 0.25);
     // Headlights (front) and taillights (rear).
     const fx = Math.sin(c.angle), fz = Math.cos(c.angle);
     const px = Math.cos(c.angle), pz = -Math.sin(c.angle);
@@ -477,6 +516,99 @@ export function buildDynamicGeometry(city) {
     geo.box(p.x, 3.2, p.z, 1.5, 2.6, 1.5, p.angle, hexRgb(p.jacket));
     geo.box(p.x, 5.8, p.z, 1.3, 1.3, 1.3, p.angle, hexRgb('#d8a880'));
   }
+
+  // Mara on foot: coral jacket, so the player reads at a glance.
+  if (opts.mara) {
+    const m = opts.mara;
+    geo.box(m.x, 0, m.z, 1.4, 3.2, 1.4, m.angle, hexRgb('#2e3440'));
+    geo.box(m.x, 3.2, m.z, 1.5, 2.6, 1.5, m.angle, hexRgb('#e8604a'));
+    geo.box(m.x, 5.8, m.z, 1.3, 1.3, 1.3, m.angle, hexRgb('#d8a880'));
+    geo.box(m.x, 7.1, m.z, 1.5, 0.7, 1.5, m.angle, hexRgb('#f2f2f2'));
+  }
+
+  // Drivable cars carry a floating marker (a small pyramid that bobs), so
+  // they read as drivable at a glance; parked cars have none.
+  const t = (opts.timeMs || 0) / 1000;
+  city.cars.drivable.forEach((c, i) => {
+    const bob = Math.sin(t * 3 + i * 1.7) * 0.5;
+    geo.pyramid(c.x, 6.4 + bob, c.z, 1.6, 2.4, t * 0.5, hexRgb('#ffd23d'), [0.9, 0.72, 0.15]);
+  });
+
+  // Headlight cones for the driven car: two flat trapezoids on the road,
+  // a dim outer beam and a brighter core, so the beam reads as a beam
+  // instead of a flat white blob. Emissive is scaled by the preset level
+  // (dimmer at midday) on top of the shader's per-preset emissiveScale.
+  // The cones sit at y=0.17/0.19, above the raised road asphalt (0.15).
+  if (opts.drivenCar && opts.headlightsOn !== false) {
+    const c = opts.drivenCar;
+    const level = opts.headlightLevel ?? 1;
+    const fx = Math.sin(c.angle), fz = Math.cos(c.angle);
+    const rx = Math.cos(c.angle), rz = -Math.sin(c.angle);
+    const bx = c.x + fx * 4.5, bz = c.z + fz * 4.5; // front bumper
+    const up = [0, 1, 0];
+    const cone = (len, w0, w1, y, emissive) => {
+      const p0 = [bx + rx * -w0, y, bz + rz * -w0];
+      const p1 = [bx + fx * len + rx * -w1, y, bz + fz * len + rz * -w1];
+      const p2 = [bx + fx * len + rx * w1, y, bz + fz * len + rz * w1];
+      const p3 = [bx + rx * w0, y, bz + rz * w0];
+      geo.quad(p0, p1, p2, p3, up, [0, 0, 0], emissive);
+    };
+    cone(42, 1.4, 5.0, 0.17, [0.5 * level, 0.45 * level, 0.34 * level]);
+    cone(34, 1.0, 2.6, 0.19, [1.0 * level, 0.92 * level, 0.7 * level]);
+  }
+
+  // E prompt ring on the ground around the car in reach: coral to enter,
+  // grey for a locked parked car.
+  if (opts.prompt) {
+    const pr = opts.prompt;
+    const col = pr.mode === 'enter' ? [0.95, 0.4, 0.3] : [0.45, 0.45, 0.45];
+    const segs = 24;
+    for (let i = 0; i < segs; i++) {
+      const a = (i / segs) * Math.PI * 2;
+      const a2 = ((i + 1) / segs) * Math.PI * 2;
+      const cx = pr.x + Math.cos(a) * pr.r, cz = pr.z + Math.sin(a) * pr.r;
+      const nx = pr.x + Math.cos(a2) * pr.r, nz = pr.z + Math.sin(a2) * pr.r;
+      // A short thick segment: radial width 1.0, tangential length ~ the arc.
+      const mx = (cx + nx) / 2, mz = (cz + nz) / 2;
+      const tx = nx - cx, tz = nz - cz;
+      const tl = Math.hypot(tx, tz) || 1;
+      const ux = tx / tl, uz = tz / tl;
+      const px = -uz, pz = ux;
+      // Ring segments sit at y=0.20, above the raised asphalt (0.15).
+      geo.quad(
+        [mx - ux * 1.4 + px * 0.5, 0.20, mz - uz * 1.4 + pz * 0.5],
+        [mx + ux * 1.4 + px * 0.5, 0.20, mz + uz * 1.4 + pz * 0.5],
+        [mx + ux * 1.4 - px * 0.5, 0.20, mz + uz * 1.4 - pz * 0.5],
+        [mx - ux * 1.4 - px * 0.5, 0.20, mz - uz * 1.4 - pz * 0.5],
+        [0, 1, 0], [0, 0, 0], col,
+      );
+    }
+  }
+
+  // Dust puffs from collisions: growing, fading grey boxes.
+  for (const d of opts.dust || []) {
+    const k = d.age / d.life;
+    const s = d.size * (0.5 + k);
+    const fade = 0.45 * (1 - k);
+    geo.box(d.x, 0.4, d.z, s, s * 0.55, s, 0, [0.72, 0.7, 0.64], [fade, fade * 0.93, fade * 0.8]);
+  }
+
+  // Traffic-light glow: one small emissive box per approach direction,
+  // poking out of the static head on both faces, coloured by the live
+  // signal (red 17.8, yellow 15.8, green 13.8 — the static lamp heights).
+  const lampY = { green: 13.8, yellow: 15.8, red: 17.8 };
+  const lampCol = {
+    green: { c: [0.2, 1, 0.3], e: [0.15, 0.9, 0.25] },
+    yellow: { c: [1, 0.8, 0.2], e: [0.9, 0.7, 0.15] },
+    red: { c: [1, 0.15, 0.1], e: [0.9, 0.1, 0.05] },
+  };
+  for (const l of opts.lights || []) {
+    const ns = lampCol[l.ns] || lampCol.red;
+    const ew = lampCol[l.ew] || lampCol.red;
+    geo.box(l.x, lampY[l.ns] - 1, l.z, 2.0, 2.0, 3.4, 0, ns.c, ns.e);
+    geo.box(l.x, lampY[l.ew] - 1, l.z, 3.4, 2.0, 2.0, 0, ew.c, ew.e);
+  }
+
   return geo;
 }
 
@@ -643,6 +775,8 @@ export function createRenderer(canvas, city) {
   let skyCount = 0;
   let dynData = null;
   let dynCount = 0;
+  let dynOpts = {};
+  let hazeOn = true;
 
   function rebuildStatic() {
     const sg = buildStaticGeometry(city, presetName);
@@ -653,9 +787,18 @@ export function createRenderer(canvas, city) {
     skyCount = kg.vertexCount;
   }
   function rebuildDynamic() {
-    const dg = buildDynamicGeometry(city);
+    const dg = buildDynamicGeometry(city, dynOpts);
     dynData = dg.toFloat32();
     dynCount = dg.vertexCount;
+  }
+  // Replace the dynamic options (driven car, Mara, prompt, dust, lights)
+  // and rebuild the dynamic buffer. Called every frame by the game loop.
+  function setDynamicOpts(o) {
+    dynOpts = o || {};
+    rebuildDynamic();
+  }
+  function setHaze(on) {
+    hazeOn = !!on;
   }
   rebuildStatic();
   rebuildDynamic();
@@ -676,9 +819,9 @@ export function createRenderer(canvas, city) {
     const n = [-sn, 0, c];
     const uv = [[r.x, r.y + r.h], [r.x + r.w, r.y + r.h], [r.x + r.w, r.y], [r.x, r.y]];
     signGeo.quad(p(-w2, -h2), p(w2, -h2), p(w2, h2), p(-w2, h2), n, [1, 1, 1], [0.55, 0.55, 0.55], uv, 1, 0);
-    // Light pool on the pavement in front of the sign.
+    // Light pool on the pavement in front of the sign, above the asphalt.
     const fx = -sn, fz = c;
-    signGeo.disc(s.x + fx * 14, 0.04, s.z + fz * 14, 12, [0.85, 0.7, 0.4], [0.3, 0.24, 0.12], 12);
+    signGeo.disc(s.x + fx * 14, 0.17, s.z + fz * 14, 12, [0.85, 0.7, 0.4], [0.3, 0.24, 0.12], 12);
   }
   const signCount = signGeo.vertexCount;
   const signData = signGeo.toFloat32();
@@ -714,7 +857,7 @@ export function createRenderer(canvas, city) {
     gl.uniform3fv(uni.uSunColor, preset.sunColor);
     gl.uniform3fv(uni.uAmbient, preset.ambient);
     gl.uniform3fv(uni.uFogColor, preset.fogColor);
-    gl.uniform1f(uni.uFogDensity, preset.fogDensity);
+    gl.uniform1f(uni.uFogDensity, hazeOn ? preset.fogDensity : 0);
     gl.uniform3fv(uni.uCamPos, camera.eye);
     gl.uniform1f(uni.uEmissiveScale, preset.emissiveScale);
     // Sky first, flat-shaded (no fog, no lighting).
@@ -730,7 +873,7 @@ export function createRenderer(canvas, city) {
   }
 
   return {
-    gl, setPreset, render, rebuildDynamic,
+    gl, setPreset, render, rebuildDynamic, setDynamicOpts, setHaze,
     get presetName() { return presetName; },
     get vertexCounts() {
       return { staticVerts: staticCount, skyVerts: skyCount, dynVerts: dynCount, signVerts: signCount };
