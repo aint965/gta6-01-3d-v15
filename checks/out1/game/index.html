@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Palkon Auto — The Solmar Story</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #142d38; }
+  #game-canvas { display: block; width: 100vw; height: 100vh; }
+  #hud { position: fixed; inset: 0; pointer-events: none; font-family: Georgia, 'Times New Roman', serif; color: #f2f2f2; }
+  .panel { position: absolute; background: rgba(20, 45, 56, 0.72); border: 1px solid rgba(242, 242, 242, 0.25); border-radius: 6px; padding: 10px 14px; }
+  #hud-title { top: 14px; left: 14px; }
+  #hud-title h1 { margin: 0; font-size: 26px; letter-spacing: 2px; color: #ffd23d; }
+  #hud-title .sub { font-size: 13px; color: #d8cfc0; font-style: italic; }
+  #hud-district-box { top: 14px; left: 50%; transform: translateX(-50%); text-align: center; min-width: 280px; }
+  #hud-district { font-size: 20px; letter-spacing: 1px; }
+  #hud-tagline { font-size: 12px; color: #d8cfc0; font-style: italic; }
+  #hud-standing-wrap { margin-top: 6px; height: 8px; background: rgba(242, 242, 242, 0.2); border-radius: 4px; overflow: hidden; }
+  #hud-standing { height: 100%; width: 50%; background: #d77f69; border-radius: 4px; }
+  #hud-standing-pct { font-size: 11px; color: #ffd23d; }
+  #hud-status { top: 14px; right: 14px; text-align: right; font-size: 14px; }
+  #hud-status .row { margin: 2px 0; }
+  #hud-clock { font-size: 20px; color: #ffd23d; }
+  #hud-minimap-box { right: 14px; bottom: 14px; padding: 6px; }
+  #hud-minimap { display: block; width: 220px; height: 220px; border: 1px solid rgba(242, 242, 242, 0.25); }
+  #hud-minimap-label { text-align: center; font-size: 11px; letter-spacing: 2px; color: #d8cfc0; margin-top: 4px; }
+  #hud-speed-box { left: 14px; bottom: 14px; text-align: left; }
+  #hud-speed { font-size: 34px; color: #f2f2f2; }
+  #hud-mode { font-size: 12px; letter-spacing: 2px; color: #ffd23d; }
+  #hud-compass-box { left: 50%; bottom: 14px; transform: translateX(-50%); padding: 4px 8px; }
+  #hud-compass { display: block; }
+  #hud-controls { left: 14px; bottom: 110px; font-size: 12px; color: #d8cfc0; line-height: 1.6; }
+  #game-errors { display: none; }
+</style>
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+<div id="hud">
+  <div class="panel" id="hud-title">
+    <h1>PALKON AUTO</h1>
+    <div class="sub">The Solmar Story</div>
+  </div>
+  <div class="panel" id="hud-district-box">
+    <div id="hud-district">Solmar</div>
+    <div id="hud-tagline">A city by the sea</div>
+    <div id="hud-standing-wrap"><div id="hud-standing"></div></div>
+    <div>Standing <span id="hud-standing-pct">50/100</span></div>
+  </div>
+  <div class="panel" id="hud-status">
+    <div class="row"><span id="hud-clock">12:00</span> · <span id="hud-preset">MIDDAY</span></div>
+    <div class="row"><span id="hud-fps">… fps</span></div>
+  </div>
+  <div class="panel" id="hud-speed-box">
+    <div id="hud-speed">0 km/h</div>
+    <div id="hud-mode">STAGE A · FREE CAMERA</div>
+  </div>
+  <div class="panel" id="hud-controls">
+    WASD / arrows — move camera<br>
+    Drag — orbit · Wheel — zoom<br>
+    1 / 2 / 3 — midday / sunset / night · T — cycle
+  </div>
+  <div class="panel" id="hud-compass-box">
+    <canvas id="hud-compass" width="220" height="26"></canvas>
+  </div>
+  <div class="panel" id="hud-minimap-box">
+    <canvas id="hud-minimap" width="220" height="220"></canvas>
+    <div id="hud-minimap-label">SOLMAR</div>
+  </div>
+</div>
+<div id="game-errors"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
